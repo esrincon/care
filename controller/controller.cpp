@@ -12,6 +12,7 @@
  
  #include <iostream>
  #include <string>
+ #include <deque>
  
  using namespace std;
  using namespace Eigen;
@@ -126,6 +127,11 @@
 	 Vector3d ee_pos_clean_start;
 
 	 Vector3d ee_pos_desired;
+
+
+	 // FOR THE VELOCITY HANDLING
+	 std::deque<double>   vel_buf;    // will hold up to 100 samples
+	 double               vel_sum = 0;
 
 	// get list of scrub points
 	// auto scrub_points = getScrubPoints(redis_client, SCRUB_POINTS_KEY);
@@ -246,11 +252,13 @@
 			 }
 
 			} else if (state == INITIAL_APPROACH2) {
-				double desired_y_vel = -0.05;
+				double desired_y_vel = -0.01;
+
+
 
 				VectorXd kp_gain(3);
 			    kp_gain << 100.0, 0.0, 100.0;
-				VectorXd kv_gain = VectorXd::Constant(3, 30.0);
+				VectorXd kv_gain = VectorXd::Constant(3, 10.0);
 			    VectorXd ki_gain = VectorXd::Zero(3);
 				pose_task->setPosControlGains(kp_gain, kv_gain, ki_gain);
 				
@@ -269,11 +277,29 @@
 				// Print position				
 				Vector3d ee_curr_vel= robot->linearVelocity(control_link, control_point);
 				ee_pos_current = robot->position(control_link, control_point);
-				cout << "INITIAL_APPROACH2 | Current:  "
-				 << ee_pos_current.transpose()  
-				 << ee_curr_vel.transpose() << endl;
+				// cout << "INITIAL_APPROACH2 | Current:  "
+				//  << ee_pos_current.transpose()  
+				//  << ee_curr_vel.transpose() <<  endl;
 
-				if (ee_curr_vel[1] <= desired_y_vel) {
+				double v_y = ee_curr_vel[1];
+
+    			// 1) push new sample
+				vel_buf.push_back(v_y);
+				vel_sum += v_y;
+
+		// 2) if we have more than 100, drop the oldest
+				if (vel_buf.size() > 100) {
+					vel_sum -= vel_buf.front();
+					vel_buf.pop_front();
+				}
+
+    // 3) compute the average over however many we have (up to 100)
+    			double avg_vy = vel_sum / vel_buf.size();
+
+				cout << "INITIAL_APPROACH2 | Current:  "
+				 << avg_vy << ee_curr_vel[1] <<  endl;
+
+				if (avg_vy <= desired_y_vel) {
 					reached_vel = true;
 					cout << "changed" << endl;
 				}
