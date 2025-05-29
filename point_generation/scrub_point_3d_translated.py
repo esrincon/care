@@ -4,7 +4,6 @@ import cv2
 import pyrealsense2 as rs
 import mediapipe as mp
 import redis
-import json
 
 SCRUB_POINTS_KEY = "sai::commands::Sponge::scrub_points"
 
@@ -195,6 +194,22 @@ def transform_points(points):
     return [tuple((R @ np.array(p)).tolist()) for p in points]
 
 
+def publish_all_as_one(true_points, orientations,
+                       host="localhost", port=6379, db=0):
+    # build the two semicolon-delimited lists
+    pos_str = ";".join(f"{X:.6f},{Y:.6f},{Z:.6f}"
+                       for X, Y, Z in true_points)
+    ori_str = ";".join(f"{r:.6f},{p:.6f},{y:.6f}"
+                       for r, p, y in orientations)
+
+    # single blob:  "<x,y,z>;…;<x,y,z>|<r,p,y>;…;<r,p,y>"
+    blob = pos_str + "|" + ori_str
+
+    r = redis.Redis(host=host, port=port, db=db, socket_timeout=2)
+    r.set(SCRUB_POINTS_KEY, blob)
+    print(f"[publish] SET {SCRUB_POINTS_KEY} size={len(blob)}")
+
+
 if __name__ == "__main__":
     # 1) Capture raw torso points
     true_points, orientations = get_torso_grid_with_depth()
@@ -207,14 +222,4 @@ if __name__ == "__main__":
     print(f"[main] :floppy_disk: Saved all transformed points to '{txt_path}'")
     
     # 3) Push **all** points into Redis list
-    # build a dict
-    payload = {
-        "points":      [ [X, Y, Z]           for (X, Y, Z)           in true_points    ],
-        "orientations":[ [r, p, y]           for (r, p, y)           in orientations  ],
-    }
-    # dump to JSON
-    s = json.dumps(payload)
-    # write it under one key
-    r = redis.Redis(host=host, port=port, db=db, socket_timeout=2)
-    r.set(SCRUB_POINTS_KEY, s)
-    print(f"[publish] SET {SCRUB_POINTS_KEY} = {s[:80]}…")
+    publish_all_as_one(true_points=true_points, orientations=orientations)
